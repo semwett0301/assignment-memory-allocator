@@ -23,7 +23,7 @@ extern inline block_capacity
 capacity_from_size( block_size
 sz );
 
-static bool block_is_big_enough(size_t query, struct block_header *block) { return block->capacity.bytes >= query; }
+static bool block_is_big_enough(size_t query, const struct block_header *block) { return block->capacity.bytes >= query; }
 
 static size_t pages_count(size_t mem) { return mem / getpagesize() + ((mem % getpagesize()) > 0); }
 
@@ -52,24 +52,24 @@ static void *map_pages(void const *addr, size_t length, int additional_flags) {
 static struct region alloc_region(void const *addr, size_t query) {
     // Пытаемся вызвать MMAP на конкретном адресе
     const size_t region_size = region_actual_size(query);
-    void *address_of_allocated_blocks = map_pages(addr, region_size, MAP_FIXED);
+    void *address_of_allocated_blocks = map_pages(addr, region_size, MAP_FIXED_NOREPLACE);
 
-    if (address_of_allocated_blocks == (void *)-1) {
+    if (address_of_allocated_blocks == (void *) MAP_FAILED) {
         address_of_allocated_blocks = map_pages(addr, region_size, 0);
     }
 
-    if (address_of_allocated_blocks == (void *)-1) {
+    if (address_of_allocated_blocks == (void *) MAP_FAILED) {
         address_of_allocated_blocks = NULL;
     }
 
     // Регистрируем блок, если получилось вызвать MMAP
-    struct region allocated_block = (struct region) {
+    struct region allocated_region = (struct region) {
             .addr = address_of_allocated_blocks,
             .size = region_size,
             .extends = true
     };
 
-    if (region_is_invalid(&allocated_block) ) {
+    if (region_is_invalid(&allocated_region) ) {
         return REGION_INVALID;
     }
 
@@ -78,7 +78,7 @@ static struct region alloc_region(void const *addr, size_t query) {
     };
 
     block_init(address_of_allocated_blocks, size, NULL);
-    return allocated_block;
+    return allocated_region;
 
 }
 
@@ -101,6 +101,8 @@ static bool block_splittable(struct block_header *restrict block, size_t query) 
 }
 
 static bool split_if_too_big(struct block_header *block, size_t query) {
+    query = size_max(query, BLOCK_MIN_CAPACITY);
+
     // Проверяем, можно ли разделить блок
     if (block_splittable(block, query)) {
         // Определяем размер нового блока
@@ -143,14 +145,10 @@ static bool mergeable(struct block_header const *restrict fst, struct block_head
 static bool try_merge_with_next(struct block_header *block) {
     struct block_header *init_next_block = block->next;
 
-    if (block->next) {
-        if (mergeable(block, init_next_block)) {
-            block->capacity.bytes += block->next->capacity.bytes;
-            block->next = init_next_block->next;
-            return true;
-        } else {
-            return false;
-        }
+    if (block->next && mergeable(block, init_next_block)) {
+        block->capacity.bytes += block->next->capacity.bytes;
+        block->next = init_next_block->next;
+        return true;
     }
     return false;
 }

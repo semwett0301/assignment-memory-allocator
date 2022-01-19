@@ -11,6 +11,11 @@
 
 #define HEAP_START ((void*)0x04040000)
 
+enum map_status {
+    MAP_FAILED = -1,
+    MAP_SUCCESS = 0
+};
+
 void* _malloc( size_t query );
 void  _free( void* mem );
 void* heap_init( size_t initial_size );
