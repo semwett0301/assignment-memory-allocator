@@ -53,9 +53,11 @@ static struct region alloc_region(void const *addr, size_t query) {
     // Пытаемся вызвать MMAP на конкретном адресе
     const size_t region_size = region_actual_size(query);
     void *address_of_allocated_blocks = map_pages(addr, region_size, MAP_FIXED_NOREPLACE);
+    bool extends_region = true;
 
     if (address_of_allocated_blocks == (void *) MAP_FAILED) {
-        address_of_allocated_blocks = map_pages(addr, region_size, 0);
+        address_of_allocated_blocks = map_pages(addr, region_size, NULL);
+        extends_region = false;
     }
 
     if (address_of_allocated_blocks == (void *) MAP_FAILED) {
@@ -66,7 +68,7 @@ static struct region alloc_region(void const *addr, size_t query) {
     struct region allocated_region = (struct region) {
             .addr = address_of_allocated_blocks,
             .size = region_size,
-            .extends = true
+            .extends = extends_region
     };
 
     if (region_is_invalid(&allocated_region) ) {
@@ -112,7 +114,7 @@ static bool split_if_too_big(struct block_header *block, size_t query) {
 
         // Переопределяем размер предыдущего блока и ищем адрес следующего
         block->capacity.bytes = query;
-        void *new_next_block_address = block_after(block);
+        void *new_next_block_address = (void*)((uint8_t*) block + offsetof(struct block_header, contents) + query);
 
         // Регистрируем новый блок и меняем адрес следующего блок в предыдущем
         block_init(new_next_block_address, next_block_size, block->next);
@@ -220,14 +222,8 @@ static struct block_header *grow_heap(struct block_header *restrict last, size_t
     split_if_too_big(grown_region.addr, query);
 
     last->next = grown_region.addr;
-    if(try_merge_with_next(last)) {
-        last->is_free = false;
-        return last;
-    }
-
-    last->is_free = false;
-    last->next->is_free = false;
-    return last->next;
+    try_merge_with_next(last);
+    return last;
 
 }
 
@@ -246,6 +242,14 @@ static struct block_header *memalloc(size_t query, struct block_header *heap_sta
             // Если блока нет, то пытаемся расширить кучу и снова пробуем найти подходящий блок (если кучу расширить не получилось, то вернем NULL)
         case BSR_REACHED_END_NOT_FOUND:
             new_part = grow_heap(init_try_find_block.block, query);
+            // Меняем занятость
+            new_part->is_free = false;
+
+            // Проверяем, удалось ли слияние
+            if(new_part->next) {
+                new_part = new_part->next;
+                new_part->is_free = false;
+            }
             return new_part;
 
         default:
